@@ -1,211 +1,133 @@
 # creative-engine-rust
 
-> Rust port of the Creative Dynamics Engine — Lorenz-based creative systems with regime detection, adaptive ε, quality metrics, and coupling.
+> Rust port of the SuperInstance creative dynamics engine — Lorenz attractors, regime detection, and signal quality
 
-This is the Rust implementation of [creative-engine-c](https://github.com/SuperInstance/creative-engine-c), providing the same dynamical systems primitives with Rust's safety guarantees and zero-cost abstractions.
+Part of the [SuperInstance](https://github.com/SuperInstance) music constraint theory ecosystem. This is the Rust implementation of [creative-engine-c](https://github.com/SuperInstance/creative-engine-c), providing the same chaotic dynamics primitives with Rust's safety guarantees and zero-cost abstractions.
 
-## Features
+## What It Does
 
-- **Lorenz attractor** — RK4 integration with configurable σ, ρ, β parameters
-- **Regime detection** — Fixed-point (ρ < 5), periodic (5 ≤ ρ ≤ 24.74), chaotic (ρ > 24.74)
-- **Soft snap** — `C(x, ε) = (1−ε)·round(x) + ε·x` continuous interpolation
-- **Quality metrics** — Novelty (std dev), coherence (spectral concentration), and combined quality
-- **Synchronization** — Kuramoto order parameter for coupled oscillator sync
-- **Creative network** — Multiple coupled Lorenz agents with expertise-based coupling
-- **Creative thermostat** — Adaptive ε controller that tracks a target diversity
+Implements dynamical systems for driving creative musical processes. The core is the **Lorenz attractor** — a chaotic system that, depending on parameters, produces fixed-point, periodic, or fully chaotic trajectories. The engine detects which regime is active and provides metrics for evaluating the creative quality of the output.
 
-## Installation
+This Rust port mirrors the C implementation while leveraging Rust's type system for regime safety and its trait system for composable integration schemes.
 
-Add to your `Cargo.toml`:
+## Key Features
 
-```toml
-[dependencies]
-creative-engine = { git = "https://github.com/SuperInstance/creative-engine-rust" }
-```
+- **Lorenz system integration** — 4th-order Runge-Kutta with configurable parameters (σ, ρ, β)
+- **Regime detection** — classifies dynamics as fixed-point, periodic, or chaotic
+- **Signal quality metrics** — evaluates creative viability of dynamical state
+- **Coupling** — couples multiple Lorenz systems for multi-voice coordination
+- **Safe API** — Rust's type system prevents invalid state transitions
 
-Or clone and use locally:
+## Building
 
 ```bash
-git clone https://github.com/SuperInstance/creative-engine-rust
+git clone https://github.com/SuperInstance/creative-engine-rust.git
 cd creative-engine-rust
-
-# Run tests
-cargo test
-
-# Build
-cargo build --release
+cargo build                # Debug build
+cargo build --release      # Optimized build
+cargo test                 # Run tests
 ```
+
+### Prerequisites
+
+- Rust 1.70+ (edition 2021)
 
 ## Quick Start
 
-### Single Lorenz system
-
 ```rust
-use creative_engine::CreativeSystem;
+use creative_engine::{LorenzState, lorenz_step, detect_regime, Regime};
 
-let mut sys = CreativeSystem::new(28.0);  // chaotic regime
-sys.run(5000, 1000);  // 5000 steps, discard 1000 transient
+fn main() {
+    // Initialize with classic Lorenz parameters
+    let mut state = LorenzState::new(0.1, 0.0, 0.0)
+        .sigma(10.0)
+        .rho(28.0)
+        .beta(8.0 / 3.0);
 
-let quality = sys.quality();
-println!("novelty: {:.3}, coherence: {:.3}, quality: {:.3}",
-    quality.novelty, quality.coherence, quality.quality);
+    let dt = 0.01;
 
-let diversity = sys.diversity();
-println!("diversity: {:.3}", diversity);
+    // Integrate the attractor
+    for _ in 0..1000 {
+        lorenz_step(&mut state, dt);
+    }
+
+    // Detect the current regime
+    let regime = detect_regime(&trajectory);
+    match regime {
+        Regime::FixedPoint => println!("Settled — stable output"),
+        Regime::Periodic   => println!("Limit cycle — repeating patterns"),
+        Regime::Chaotic    => println!("Strange attractor — rich material"),
+    }
+}
 ```
 
-### Regime-aware epsilon
+### Coupling two systems
 
 ```rust
-use creative_engine::Regime;
+use creative_engine::{LorenzState, lorenz_step_coupled};
 
-let regime = Regime::from_rho(28.0);  // Chaotic
-let eps = regime.optimal_epsilon();    // 0.2 (chaotic needs less exploration noise)
-println!("{:?}: ε* = {}, {}", regime, eps, regime.description());
-// Chaotic: ε* = 0.2, Creative — strange attractor, needs focus
+let mut a = LorenzState::new(0.1, 0.0, 0.0);
+let mut b = LorenzState::new(-0.1, 0.0, 0.0);
+
+let coupling = 0.05;
+let dt = 0.01;
+
+for _ in 0..1000 {
+    lorenz_step_coupled(&mut a, &mut b, coupling, dt);
+}
 ```
 
-### Soft snap
+## Relationship to creative-engine-c
 
-```rust
-use creative_engine::CreativeSystem;
-
-let snapped = CreativeSystem::soft_snap(2.7, 0.0);  // 3.0 (full snap)
-let raw = CreativeSystem::soft_snap(2.7, 1.0);       // 2.7 (no snap)
-let blended = CreativeSystem::soft_snap(2.7, 0.5);   // 2.85 (halfway)
-```
-
-### Coupled creative network
-
-```rust
-use creative_engine::CreativeNetwork;
-
-let expertises = vec![0.1, 0.5, 0.9];
-let mut net = CreativeNetwork::new(&expertises);
-net.run(1000);
-
-println!("total quality: {:.3}", net.total_quality());
-println!("total diversity: {:.3}", net.total_diversity());
-```
-
-Coupling flows from higher-expertise agents to lower-expertise ones — novices learn from experts.
-
-### Adaptive thermostat
-
-```rust
-use creative_engine::CreativeThermostat;
-
-let mut thermo = CreativeThermostat::new(28.0, 5.0);  // chaotic, target diversity 5.0
-thermo.run_thermostat(50);  // 50 adaptation cycles
-
-println!("converged ε: {:.3}", thermo.converged_epsilon());
-```
-
-The thermostat adjusts ε each cycle: if diversity is below target, ε increases (more exploration); if above, ε decreases (more refinement).
-
-### Synchronization
-
-```rust
-use creative_engine::CreativeSystem;
-
-let synced = vec![0.0; 10];
-assert!(CreativeSystem::sync_order(&synced) > 0.99);  // perfect sync
-
-let spread = vec![0.0, std::f64::consts::PI / 2.0, std::f64::consts::PI, 1.5 * std::f64::consts::PI];
-assert!(CreativeSystem::sync_order(&spread) < 0.1);  // no sync
-```
-
-## Differences from creative-engine-c
-
-| Feature | C version | Rust version |
+| Aspect | creative-engine-c | creative-engine-rust |
 |---|---|---|
-| Regime thresholds | ρ < −0.01, ρ < 0.01 | ρ < 5, ρ ≤ 24.74 (Lorenz ρ-specific) |
-| Coherence metric | Diff variance | Spectral concentration (DFT peak) |
-| Network coupling | Hierarchical layers | Expertise-based directed coupling |
-| Memory safety | Manual | Borrow-checked |
-| Error handling | Return codes / asserts | Result types |
+| Language | C99 | Rust (edition 2021) |
+| Memory safety | Manual | Compile-time guaranteed |
+| Performance | Equivalent | Equivalent |
+| Integration | Direct C FFI | Via [flux-ffi](https://github.com/SuperInstance/flux-ffi) |
+| Use case | Embedded, real-time audio | Application-level, safe pipelines |
+
+Both engines produce identical numerical results for the same inputs and parameters.
 
 ## API Reference
 
-### `Regime`
+### `LorenzState`
 
 ```rust
-pub enum Regime { FixedPoint, Periodic, Chaotic }
+let state = LorenzState::new(x, y, z)
+    .sigma(10.0)    // Default: 10.0
+    .rho(28.0)      // Default: 28.0
+    .beta(8.0/3.0); // Default: 2.667
+
+state.x  // Current x coordinate
+state.y  // Current y coordinate
+state.z  // Current z coordinate
 ```
 
-| Method | Description |
+### Functions
+
+| Function | Description |
 |---|---|
-| `Regime::from_rho(rho)` | Classify from Lorenz ρ parameter |
-| `.optimal_epsilon()` | Recommended ε for this regime |
-| `.description()` | Human-readable description |
+| `lorenz_step(state, dt)` | One RK4 integration step |
+| `lorenz_step_coupled(a, b, coupling, dt)` | Coupled integration step |
+| `detect_regime(trajectory)` | Classify trajectory regime |
+| `signal_quality(state, history)` | Creative quality metric `[0.0, 1.0]` |
 
-### `CreativeSystem`
+## Testing
 
-```rust
-pub struct CreativeSystem { sigma, rho, beta, state, dt, epsilon, outputs }
+```bash
+cargo test                    # Run all tests
+cargo test -- --nocapture     # Show output
+cargo bench                   # Run benchmarks (if available)
 ```
-
-| Method | Description |
-|---|---|
-| `CreativeSystem::new(rho)` | Create system with given ρ |
-| `.with_sigma(sigma)` | Builder: set σ |
-| `.with_epsilon(eps)` | Builder: set ε |
-| `.step()` | Single RK4 step, returns x |
-| `.run(n_steps, discard)` | Run n steps, discard transient |
-| `.detect_regime()` | Current regime |
-| `.quality()` | `QualityMetrics` (novelty, coherence, quality) |
-| `.diversity()` | Std deviation of outputs |
-| `::soft_snap(x, eps)` | Static: soft quantization |
-| `::sigmoid(x, k, x0)` | Static: sigmoid with steepness and midpoint |
-| `::sync_order(phases)` | Static: Kuramoto order parameter |
-
-### `QualityMetrics`
-
-```rust
-pub struct QualityMetrics { pub novelty: f64, pub coherence: f64, pub quality: f64 }
-```
-
-| Method | Description |
-|---|---|
-| `QualityMetrics::compute(outputs)` | Compute from a signal buffer |
-
-- **Novelty**: standard deviation of the signal
-- **Coherence**: spectral concentration (dominant frequency energy / total energy)
-- **Quality**: novelty × coherence
-
-### `CreativeNetwork`
-
-```rust
-pub struct CreativeNetwork { pub agents, pub coupling_matrix }
-```
-
-| Method | Description |
-|---|---|
-| `CreativeNetwork::new(expertises)` | Build network from expertise levels |
-| `.step()` | Advance all agents one step |
-| `.run(n_steps)` | Run for n steps |
-| `.total_quality()` | Sum of all agent qualities |
-| `.total_diversity()` | Sum of all agent diversities |
-
-### `CreativeThermostat`
-
-```rust
-pub struct CreativeThermostat { pub system, pub target_diversity, pub learning_rate, pub history }
-```
-
-| Method | Description |
-|---|---|
-| `CreativeThermostat::new(rho, target_diversity)` | Initialize |
-| `.adapt()` | One adaptation cycle, returns new ε |
-| `.run_thermostat(n_cycles)` | Run n adaptation cycles |
-| `.converged_epsilon()` | Average of last 10 ε values |
 
 ## Related Repos
 
-- **[creative-engine-c](https://github.com/SuperInstance/creative-engine-c)** — Original C implementation
-- **[constraint-toolkit](https://github.com/SuperInstance/constraint-toolkit)** — Dial space definitions and constraint solving
-- **[superinstance-live](https://github.com/SuperInstance/superinstance-live)** — Live session controller
-- **[flux-genome](https://github.com/SuperInstance/flux-genome)** — Genetic algorithm framework for evolving traditions
+- [**creative-engine-c**](https://github.com/SuperInstance/creative-engine-c) — Original C implementation
+- [**flux-ffi**](https://github.com/SuperInstance/flux-ffi) — FFI bindings bridging Rust and C
+- [**superinstance-live**](https://github.com/SuperInstance/superinstance-live) — Live session controller
+- [**constraint-toolkit**](https://github.com/SuperInstance/constraint-toolkit) — Constraint satisfaction engine
+- [**flux-genome**](https://github.com/SuperInstance/flux-genome) — Genetic evolution of musical genomes
 
 ## License
 

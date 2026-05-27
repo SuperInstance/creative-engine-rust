@@ -411,6 +411,198 @@ mod tests {
         assert!(!thermo.history.is_empty());
     }
 
+    // --- Additional coverage tests ---
+
+    #[test]
+    fn test_regime_descriptions() {
+        assert!(!Regime::FixedPoint.description().is_empty());
+        assert!(!Regime::Periodic.description().is_empty());
+        assert!(!Regime::Chaotic.description().is_empty());
+        assert!(Regime::FixedPoint.description().contains("Rigid"));
+        assert!(Regime::Periodic.description().contains("Oscillating"));
+        assert!(Regime::Chaotic.description().contains("Creative"));
+    }
+
+    #[test]
+    fn test_regime_boundary_values() {
+        assert_eq!(Regime::from_rho(0.0), Regime::FixedPoint);
+        assert_eq!(Regime::from_rho(4.999), Regime::FixedPoint);
+        assert_eq!(Regime::from_rho(5.0), Regime::Periodic);
+        assert_eq!(Regime::from_rho(24.739), Regime::Periodic);
+        assert_eq!(Regime::from_rho(24.75), Regime::Chaotic);
+        assert_eq!(Regime::from_rho(100.0), Regime::Chaotic);
+    }
+
+    #[test]
+    fn test_regime_from_rho_matches_detect_regime() {
+        for rho in [1.0, 5.0, 10.0, 24.74, 28.0, 50.0] {
+            let mut sys = CreativeSystem::new(rho);
+            assert_eq!(sys.detect_regime(), Regime::from_rho(rho));
+        }
+    }
+
+    #[test]
+    fn test_with_sigma_builder() {
+        let sys = CreativeSystem::new(28.0).with_sigma(5.0);
+        assert!((sys.sigma - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_with_epsilon_builder() {
+        let sys = CreativeSystem::new(28.0).with_epsilon(0.99);
+        assert!((sys.epsilon - 0.99).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_chained_builders() {
+        let sys = CreativeSystem::new(15.0).with_sigma(7.0).with_epsilon(0.3);
+        assert!((sys.sigma - 7.0).abs() < 1e-10);
+        assert!((sys.epsilon - 0.3).abs() < 1e-10);
+        assert!((sys.rho - 15.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_step_returns_output() {
+        let mut sys = CreativeSystem::new(28.0);
+        let out = sys.step();
+        assert!(!out.is_nan());
+        assert_eq!(sys.outputs.len(), 1);
+        assert!((sys.outputs[0] - out).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_run_clears_and_fills_outputs() {
+        let mut sys = CreativeSystem::new(28.0);
+        sys.step();
+        assert_eq!(sys.outputs.len(), 1);
+        sys.run(200, 50);
+        assert_eq!(sys.outputs.len(), 200);
+    }
+
+    #[test]
+    fn test_default_params() {
+        let sys = CreativeSystem::new(28.0);
+        assert!((sys.sigma - 10.0).abs() < 1e-10);
+        assert!((sys.beta - 8.0 / 3.0).abs() < 1e-10);
+        assert!((sys.dt - 0.01).abs() < 1e-10);
+        assert_eq!(sys.state, [0.1, 0.1, 0.1]);
+    }
+
+    #[test]
+    fn test_quality_metrics_empty() {
+        let q = QualityMetrics::compute(&[]);
+        assert_eq!(q.novelty, 0.0);
+        assert_eq!(q.coherence, 0.0);
+        assert_eq!(q.quality, 0.0);
+    }
+
+    #[test]
+    fn test_quality_metrics_single_value() {
+        let q = QualityMetrics::compute(&[42.0]);
+        assert_eq!(q.novelty, 0.0);
+        // Single element => coherence should be 0 or 1 depending on DFT of len-1
+        assert!(q.coherence >= 0.0 && q.coherence <= 1.0);
+    }
+
+    #[test]
+    fn test_diversity_empty_outputs() {
+        let sys = CreativeSystem::new(28.0);
+        assert_eq!(sys.diversity(), 0.0);
+    }
+
+    #[test]
+    fn test_diversity_matches_novelty() {
+        let mut sys = CreativeSystem::new(28.0);
+        sys.run(500, 100);
+        let div = sys.diversity();
+        let nov = sys.quality().novelty;
+        assert!((div - nov).abs() < 1e-10, "diversity {} should equal novelty {}", div, nov);
+    }
+
+    #[test]
+    fn test_soft_snap_edge_cases() {
+        // Exact integer
+        assert_eq!(CreativeSystem::soft_snap(3.0, 0.5), 3.0 * 0.5 + 3.0 * 0.5);
+        // Negative values
+        let result = CreativeSystem::soft_snap(-2.3, 0.0);
+        assert_eq!(result, -2.0);
+    }
+
+    #[test]
+    fn test_sigmoid_steepness() {
+        let gentle = CreativeSystem::sigmoid(1.0, 0.1, 0.0);
+        let steep = CreativeSystem::sigmoid(1.0, 10.0, 0.0);
+        assert!(steep > gentle, "Steeper k should give higher sigmoid for positive x-x0");
+    }
+
+    #[test]
+    fn test_sync_order_uniform_phases() {
+        // Uniformly distributed phases => low order
+        let phases: Vec<f64> = (0..100).map(|i| 2.0 * std::f64::consts::PI * i as f64 / 100.0).collect();
+        let order = CreativeSystem::sync_order(&phases);
+        assert!(order < 0.1, "Uniform phases should have near-zero order, got {}", order);
+    }
+
+    #[test]
+    fn test_network_coupling_asymmetry() {
+        let expertises = vec![0.2, 0.5, 0.8];
+        let net = CreativeNetwork::new(&expertises);
+        // Low expertise should couple to higher
+        assert!(net.coupling_matrix[0][2] > 0.0, "Low expertise should couple to high");
+        // High expertise should NOT couple to lower
+        assert_eq!(net.coupling_matrix[2][0], 0.0, "High expertise should not couple to low");
+        // No self-coupling
+        for i in 0..3 {
+            assert_eq!(net.coupling_matrix[i][i], 0.0, "No self-coupling at index {}", i);
+        }
+    }
+
+    #[test]
+    fn test_network_step_returns_outputs() {
+        let expertises = vec![0.3, 0.6, 0.9];
+        let mut net = CreativeNetwork::new(&expertises);
+        let outputs = net.step();
+        assert_eq!(outputs.len(), 3);
+        for out in &outputs {
+            assert!(!out.is_nan());
+        }
+    }
+
+    #[test]
+    fn test_network_total_diversity() {
+        let expertises = vec![0.3, 0.6, 0.9];
+        let mut net = CreativeNetwork::new(&expertises);
+        net.run(500);
+        let div = net.total_diversity();
+        assert!(div >= 0.0);
+    }
+
+    #[test]
+    fn test_thermostat_converged_epsilon_empty_history() {
+        let thermo = CreativeThermostat::new(28.0, 5.0);
+        let eps = thermo.converged_epsilon();
+        assert!((eps - thermo.system.epsilon).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_thermostat_epsilon_bounded() {
+        let mut thermo = CreativeThermostat::new(28.0, 5.0);
+        thermo.run_thermostat(100);
+        for (eps, _) in &thermo.history {
+            assert!(*eps >= 0.01 && *eps <= 2.0, "epsilon {} out of bounds", eps);
+        }
+    }
+
+    #[test]
+    fn test_thermostat_history_grows() {
+        let mut thermo = CreativeThermostat::new(28.0, 5.0);
+        assert!(thermo.history.is_empty());
+        thermo.adapt();
+        assert_eq!(thermo.history.len(), 1);
+        thermo.adapt();
+        assert_eq!(thermo.history.len(), 2);
+    }
+
     #[test]
     fn test_regime_epsilon_decreases() {
         let mut epsilons = Vec::new();
